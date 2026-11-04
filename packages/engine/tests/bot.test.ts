@@ -19,7 +19,7 @@ import { act, id, ids, play, setup } from './helpers';
 describe('電腦玩家：行為', () => {
   it('能收集勝利時直接打出', () => {
     const s = setup({
-      hands: [['clownfish', 'dolphin', 'seal', 'stingray', 'jellyfish', 'steal'], ['seal'], ['seal']],
+      hands: [['clownfish', 'dolphin', 'seal', 'stingray', 'sacabambaspis', 'steal'], ['seal'], ['seal']],
       at: 'play',
     });
     const a = botAction(s, 0, seededRng(1));

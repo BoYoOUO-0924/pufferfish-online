@@ -165,10 +165,10 @@ describe('§4-5 河豚、Chill 與淘汰', () => {
 describe('§4 收集勝利', () => {
   it('打出淺海 5 種生物立即獲勝，不開回應時間窗', () => {
     const s = setup({
-      hands: [['clownfish', 'dolphin', 'seal', 'stingray', 'jellyfish', 'chill'], ['noway'], ['noway']],
+      hands: [['clownfish', 'dolphin', 'seal', 'stingray', 'sacabambaspis', 'chill'], ['noway'], ['noway']],
       at: 'play',
     });
-    const cards = ['clownfish', 'dolphin', 'seal', 'stingray', 'jellyfish'].map((k) =>
+    const cards = ['clownfish', 'dolphin', 'seal', 'stingray', 'sacabambaspis'].map((k) =>
       id(s, 0, k as never),
     );
     const r = act(s, { type: 'play', player: 0, cards });
@@ -179,7 +179,7 @@ describe('§4 收集勝利', () => {
 
   it('深海 5 種也可以', () => {
     const s = setup({
-      hands: [['isopod', 'barreleye', 'catshark', 'sacabambaspis', 'anglerfish'], ['seal'], ['seal']],
+      hands: [['isopod', 'barreleye', 'catshark', 'jellyfish', 'anglerfish'], ['seal'], ['seal']],
       at: 'play',
     });
     const r = act(s, { type: 'play', player: 0, cards: s.players[0]!.hand.map((c) => c.id) });

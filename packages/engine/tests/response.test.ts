@@ -80,7 +80,7 @@ describe('§6 回應時間窗與 No way', () => {
 
   it('No way 不能取消收集勝利（直接結束，不開時間窗）', () => {
     const s = setup({
-      hands: [['clownfish', 'dolphin', 'seal', 'stingray', 'jellyfish'], ['noway'], ['seal']],
+      hands: [['clownfish', 'dolphin', 'seal', 'stingray', 'sacabambaspis'], ['noway'], ['seal']],
       at: 'play',
     });
     const r = act(s, { type: 'play', player: 0, cards: s.players[0]!.hand.map((c) => c.id) });

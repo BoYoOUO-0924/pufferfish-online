@@ -1,7 +1,7 @@
 /** 卡牌定義：種類、張數、海洋層、顯示名稱與圖檔。對應 docs/規則規格書.md 第 1 節。 */
 
-export const SHALLOW = ['clownfish', 'dolphin', 'seal', 'stingray', 'jellyfish'] as const;
-export const DEEP = ['isopod', 'barreleye', 'catshark', 'sacabambaspis', 'anglerfish'] as const;
+export const SHALLOW = ['clownfish', 'dolphin', 'seal', 'stingray', 'sacabambaspis'] as const;
+export const DEEP = ['isopod', 'barreleye', 'catshark', 'jellyfish', 'anglerfish'] as const;
 export const SPECIES = [...SHALLOW, ...DEEP] as const;
 export const LAYERS = { shallow: SHALLOW, deep: DEEP } as const;
 
