@@ -8,7 +8,8 @@
   "scripts": {
     "test": "npm run test --workspaces --if-present",
     "typecheck": "npm run typecheck --workspaces --if-present",
-    "dev:server": "npm run dev -w @pufferfish/server"
+    "dev:server": "npm run dev -w @pufferfish/server",
+    "dev:web": "npm run dev -w @pufferfish/web"
   },
   "devDependencies": {
     "typescript": "^5.9.3",

@@ -3,8 +3,8 @@ import type { Action, GameEvent, PlayerView } from '@pufferfish/engine';
 
 type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;
 
-/** 玩家可以送出的遊戲動作（player 由伺服器依連線填入；timeout 只有伺服器能送） */
-export type ClientAction = DistributiveOmit<Exclude<Action, { type: 'timeout' }>, 'player'>;
+/** 玩家可以送出的遊戲動作（player 與 Watch Out 的 t 由伺服器填入；timeout 只有伺服器能送） */
+export type ClientAction = DistributiveOmit<Exclude<Action, { type: 'timeout' }>, 'player' | 't'>;
 
 export type ClientMessage =
   | { type: 'join'; name: string; token?: string }
