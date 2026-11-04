@@ -1,5 +1,6 @@
 import { MAX_PLAYERS, MIN_PLAYERS } from '@pufferfish/engine';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { preloadCards } from '../cards';
 import type { RoomHandle } from '../net';
 import { RulesDialog } from './RulesDialog';
 
@@ -8,6 +9,7 @@ export function Lobby({ room, onLeave }: { room: RoomHandle; onLeave: () => void
   const isHost = info.hostId === room.playerId;
   const [copied, setCopied] = useState(false);
   const [showRules, setShowRules] = useState(false);
+  useEffect(preloadCards, []);
   const link = `${location.origin}/r/${info.code}`;
 
   async function copy() {

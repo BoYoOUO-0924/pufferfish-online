@@ -10,7 +10,15 @@ import {
   type PlayLabel,
 } from '@pufferfish/engine';
 
-export const cardImg = (kind: CardKind | 'back') => `/cards/${kind}.png`;
+export const cardImg = (kind: CardKind | 'back') => `/cards/${kind}.webp`;
+
+/** 在等待室先載入所有卡圖，開局後不會邊玩邊載 */
+export function preloadCards() {
+  for (const kind of [...(Object.keys(CARD_INFO) as CardKind[]), 'back' as const]) {
+    const img = new Image();
+    img.src = cardImg(kind);
+  }
+}
 export const cardName = (kind: CardKind) => CARD_INFO[kind].name;
 
 export const PLAY_NAMES: Partial<Record<PlayLabel, string>> = {
