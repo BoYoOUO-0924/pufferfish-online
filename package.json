@@ -1,9 +1,12 @@
 {
   "name": "pufferfish-online",
   "private": true,
-  "workspaces": ["packages/*", "apps/*"],
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
   "scripts": {
-    "test": "npm run test -w @pufferfish/engine",
+    "test": "npm run test --workspaces --if-present",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "dev:server": "npm run dev -w @pufferfish/server"
   },
