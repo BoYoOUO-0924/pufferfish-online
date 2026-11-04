@@ -3,7 +3,7 @@ import { CARD_HELP, cardImg, cardName } from '../cards';
 
 interface Props {
   kind: CardKind | 'back';
-  size?: 'sm' | 'md' | 'lg';
+  size?: 'xs' | 'sm' | 'md' | 'lg';
   selected?: boolean;
   disabled?: boolean;
   badge?: string;

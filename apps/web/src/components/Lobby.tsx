@@ -1,11 +1,13 @@
 import { MAX_PLAYERS, MIN_PLAYERS } from '@pufferfish/engine';
 import { useState } from 'react';
 import type { RoomHandle } from '../net';
+import { RulesDialog } from './RulesDialog';
 
 export function Lobby({ room, onLeave }: { room: RoomHandle; onLeave: () => void }) {
   const info = room.room!;
   const isHost = info.hostId === room.playerId;
   const [copied, setCopied] = useState(false);
+  const [showRules, setShowRules] = useState(false);
   const link = `${location.origin}/r/${info.code}`;
 
   async function copy() {
@@ -76,6 +78,10 @@ export function Lobby({ room, onLeave }: { room: RoomHandle; onLeave: () => void
           <p className="hint">等待房主開始遊戲…</p>
         )}
       </section>
+      <button className="btn ghost" onClick={() => setShowRules(true)}>
+        📖 遊戲規則
+      </button>
+      {showRules && <RulesDialog onClose={() => setShowRules(false)} />}
     </main>
   );
 }

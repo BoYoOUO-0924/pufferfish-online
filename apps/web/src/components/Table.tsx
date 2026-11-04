@@ -1,9 +1,24 @@
-import type { PlayerView, PlayKind } from '@pufferfish/engine';
+import type { CardKind, PlayerView, PlayKind } from '@pufferfish/engine';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { PLAY_NAMES, cardName, describeEvent, describeSelection, sortHand } from '../cards';
 import { useCountdown, type RoomHandle } from '../net';
 import { CardView } from './CardView';
 import { ChefDialog, FisherDialog, GameOverDialog, PlacePufferDialog, SlapOverlay } from './Dialogs';
+import { RulesDialog } from './RulesDialog';
+import { Spotlight } from './Spotlight';
+
+const PLAY_KIND_CARD: Partial<Record<PlayKind, CardKind>> = {
+  steal: 'steal',
+  salmon: 'salmon',
+  switch: 'switch',
+  chef: 'chef',
+  wave: 'wave',
+  reverse: 'reverse',
+  watchout: 'watchout',
+};
+
+const isTyping = (e: KeyboardEvent) =>
+  e.target instanceof HTMLElement && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA');
 
 const PLAY_KIND_NAMES: Record<PlayKind, string> = {
   steal: 'Steal!',
@@ -27,11 +42,42 @@ export function Table({ room, onLeave }: { room: RoomHandle; onLeave: () => void
   const [selected, setSelected] = useState<string[]>([]);
   const [targeting, setTargeting] = useState(false);
   const [showLog, setShowLog] = useState(false);
+  const [showRules, setShowRules] = useState(false);
 
   const alive = v.players[me]?.alive ?? false;
   const myDraw = prompt?.kind === 'draw' && prompt.player === me;
   const myPlay = prompt?.kind === 'play' && prompt.player === me;
   const hand = useMemo(() => sortHand(v.hand), [v.hand]);
+  const mustSlap = prompt?.kind === 'slap' && prompt.players.includes(me) && !prompt.slappedByYou;
+  const targeted =
+    prompt?.kind === 'response' &&
+    !!v.chain &&
+    !v.chain.baseCancelled &&
+    v.chain.target === me &&
+    ['steal', 'salmon', 'switch'].includes(v.chain.play);
+  const myChoice =
+    (prompt?.kind === 'placePuffer' || prompt?.kind === 'fisher' || prompt?.kind === 'chef') && prompt.player === me;
+  const needsMe = myDraw || myPlay || myChoice || targeted || mustSlap;
+
+  // 輪到你／被指定／要拍牌時：手機震動，分頁在背景時改標題提醒
+  useEffect(() => {
+    if (!needsMe) return;
+    try {
+      // 瀏覽器規定使用者點過頁面後才能震動
+      if (navigator.userActivation?.hasBeenActive) navigator.vibrate?.(mustSlap || targeted ? [80, 40, 80] : 60);
+    } catch {
+      // 不支援震動
+    }
+    const original = '河豚愛生氣 線上版';
+    const label = mustSlap ? '🖐️ 快拍！' : targeted ? '⚠️ 你被指定了！' : '🔔 輪到你了！';
+    const update = () => (document.title = document.hidden ? label : original);
+    update();
+    document.addEventListener('visibilitychange', update);
+    return () => {
+      document.removeEventListener('visibilitychange', update);
+      document.title = original;
+    };
+  }, [needsMe, mustSlap, targeted]);
 
   // 手牌變動時移除已不在手上的選取；不是出牌階段時取消指定對象
   useEffect(() => {
@@ -61,6 +107,32 @@ export function Table({ room, onLeave }: { room: RoomHandle; onLeave: () => void
   const nameOf = (i: number) => (i === me ? '你' : v.players[i]!.name);
   const top = v.discard[v.discard.length - 1];
 
+  // 快捷鍵：空白鍵抽牌／拍牌、Enter 出牌、N No way、P Pass、Esc 不回應
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (isTyping(e) || e.repeat) return;
+      const key = e.key.toLowerCase();
+      if (key === ' ' && (mustSlap || myDraw)) {
+        e.preventDefault();
+        room.act(mustSlap ? { type: 'slap' } : { type: 'draw' });
+      } else if (key === 'enter' && myPlay && !targeting && selInfo.valid) {
+        e.preventDefault();
+        if (selInfo.needsTarget) setTargeting(true);
+        else playSelected();
+      } else if (prompt?.kind === 'response' && alive) {
+        const noway = v.hand.find((c) => c.kind === 'noway');
+        const pass = v.hand.find((c) => c.kind === 'pass');
+        if (key === 'n' && noway && prompt.canNoway) room.act({ type: 'respond', card: noway.id });
+        else if (key === 'p' && pass && prompt.canPassTo !== null) room.act({ type: 'respond', card: pass.id });
+        else if (key === 'escape' && !prompt.declinedByYou) room.act({ type: 'decline' });
+      } else if (key === 'escape' && targeting) {
+        setTargeting(false);
+      }
+    };
+    addEventListener('keydown', onKey);
+    return () => removeEventListener('keydown', onKey);
+  });
+
   const canTarget = (i: number) =>
     targeting &&
     v.players[i]!.alive &&
@@ -75,9 +147,14 @@ export function Table({ room, onLeave }: { room: RoomHandle; onLeave: () => void
         <span className="head-info">
           房號 <strong>{info.code}</strong> · 第 {v.turnCount} 回合 · {v.direction === 1 ? '↻ 順時針' : '↺ 逆時針'}
         </span>
-        <button className="btn ghost small" onClick={() => setShowLog((x) => !x)}>
-          {showLog ? '關閉紀錄' : '出牌紀錄'}
-        </button>
+        <span className="head-actions">
+          <button className="btn ghost small" onClick={() => setShowRules(true)}>
+            規則
+          </button>
+          <button className="btn ghost small" onClick={() => setShowLog((x) => !x)}>
+            {showLog ? '關閉紀錄' : '紀錄'}
+          </button>
+        </span>
       </header>
 
       <section className="opponents">
@@ -108,6 +185,7 @@ export function Table({ room, onLeave }: { room: RoomHandle; onLeave: () => void
       </section>
 
       <section className="center">
+        <Spotlight room={room} />
         <div className="piles">
           <div className="pile">
             <CardView
@@ -126,7 +204,7 @@ export function Table({ room, onLeave }: { room: RoomHandle; onLeave: () => void
         <StatusBar view={v} nameOf={nameOf} remaining={remaining} />
         {v.chain && <ChainInfo view={v} nameOf={nameOf} />}
         {prompt?.kind === 'response' && alive && (
-          <ResponseBar room={room} view={v} />
+          <ResponseBar room={room} view={v} targeted={targeted} />
         )}
       </section>
 
@@ -173,9 +251,14 @@ export function Table({ room, onLeave }: { room: RoomHandle; onLeave: () => void
       </section>
 
       {showLog && <EventLog room={room} onClose={() => setShowLog(false)} />}
+      {showRules && <RulesDialog onClose={() => setShowRules(false)} />}
 
       {prompt?.kind === 'placePuffer' && prompt.player === me && (
-        <PlacePufferDialog deckCount={prompt.deckCount} onPlace={(position) => room.act({ type: 'placePuffer', position })} />
+        <PlacePufferDialog
+          deckCount={prompt.deckCount}
+          nextName={nameOf(nextAliveFrom(v, me))}
+          onPlace={(position) => room.act({ type: 'placePuffer', position })}
+        />
       )}
       {prompt?.kind === 'fisher' && prompt.player === me && prompt.cards && (
         <FisherDialog
@@ -211,6 +294,16 @@ export function Table({ room, onLeave }: { room: RoomHandle; onLeave: () => void
       )}
     </main>
   );
+}
+
+/** 依目前方向的下一位存活玩家 */
+function nextAliveFrom(v: PlayerView, from: number): number {
+  const n = v.players.length;
+  for (let i = 1; i <= n; i++) {
+    const idx = (((from + v.direction * i) % n) + n) % n;
+    if (v.players[idx]!.alive) return idx;
+  }
+  return from;
 }
 
 /** Chef 分牌對象：自己的下一位起，依方向的存活玩家 */
@@ -271,7 +364,9 @@ function StatusBar({
       <span className="status-text">{text}</span>
       {remaining !== null && v.phase === 'playing' && (
         <>
-          <span className={`status-time${remaining <= 5 ? ' urgent' : ''}`}>{Math.ceil(remaining)}s</span>
+          <span className={`status-time${remaining <= 5 ? ' urgent' : ''}`}>
+            {Math.min(Math.ceil(remaining), total ?? Infinity)}s
+          </span>
           <div className="timer-bar">
             <div style={{ width: `${pct}%` }} />
           </div>
@@ -287,6 +382,7 @@ function ChainInfo({ view: v, nameOf }: { view: PlayerView; nameOf: (i: number) 
     <div className="chain">
       {ch.items.map((it, i) => (
         <span key={i} className={`chain-item${it.cancelled ? ' cancelled' : ''}`}>
+          <CardView kind={chainCard(v, it.kind)} size="xs" />
           {it.kind === 'base' && (
             <>
               {nameOf(it.player)} 打出 <strong>{PLAY_KIND_NAMES[ch.play]}</strong>
@@ -312,13 +408,30 @@ function ChainInfo({ view: v, nameOf }: { view: PlayerView; nameOf: (i: number) 
   );
 }
 
-function ResponseBar({ room, view: v }: { room: RoomHandle; view: PlayerView }) {
+/** 動作鏈每一項對應的卡圖（組合技用棄牌堆中那組生物） */
+function chainCard(v: PlayerView, kind: 'base' | 'noway' | 'pass'): CardKind | 'back' {
+  if (kind !== 'base') return kind;
+  const ch = v.chain!;
+  const fn = PLAY_KIND_CARD[ch.play];
+  if (fn) return fn;
+  const size = ch.play === 'net' ? 2 : ch.play === 'fisher' ? 3 : 4;
+  const responses = ch.items.length - 1;
+  return v.discard[v.discard.length - 1 - responses - (size - 1)]?.kind ?? 'back';
+}
+
+function ResponseBar({ room, view: v, targeted }: { room: RoomHandle; view: PlayerView; targeted: boolean }) {
   const p = v.prompt;
   if (p?.kind !== 'response') return null;
   const noway = v.hand.find((c) => c.kind === 'noway');
   const pass = v.hand.find((c) => c.kind === 'pass');
+  const canRespond = (noway && p.canNoway) || (pass && p.canPassTo !== null);
   return (
-    <div className="response-bar">
+    <div className={`response-bar${targeted ? ' targeted' : ''}`}>
+      {targeted && (
+        <strong className="target-alert">
+          ⚠️ 你被指定了！{canRespond ? '要回應嗎？' : '（沒有可以回應的牌）'}
+        </strong>
+      )}
       {noway && (
         <button
           className="btn danger"

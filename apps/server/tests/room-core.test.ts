@@ -302,6 +302,46 @@ describe('房間：斷線與重連', () => {
     expect(h.last('c2', 'state').view.prompt).not.toEqual({ kind: 'draw', player: 0 });
   });
 
+  it('Watch Out：以伺服器收到的時間扣掉單程延遲來比快慢', () => {
+    const h = new Harness();
+    h.startWith(['c1', 'c2', 'c3']);
+    // 直接把局面設成 P0 打出 Watch Out 後的搶拍階段
+    const g = h.core.d.game!;
+    g.prompt = { kind: 'slap', actor: 0, players: [1, 2], slaps: [] };
+    g.timer = { id: 999, ms: TIMING.slapMs };
+    h.core.d.deadlineTimerId = 999;
+    h.core.d.deadline = h.now + TIMING.slapMs;
+    h.core.d.slapStartedAt = h.now;
+    h.send('c2', { type: 'ping', t: 0, rtt: 400 }); // 網路慢：單程 200ms
+    h.now += 650;
+    h.send('c2', { type: 'action', action: { type: 'slap' } }); // 650 - 200 = 450
+    h.now += 50;
+    h.send('c3', { type: 'action', action: { type: 'slap' } }); // 700 - 0 = 700
+    const result = h.all('c1', 'events').flatMap((m) => m.events).find((e) => e.type === 'slapResult');
+    expect(result).toMatchObject({
+      type: 'slapResult',
+      loser: 2,
+      slaps: [
+        { player: 1, t: 450 },
+        { player: 2, t: 700 },
+      ],
+    });
+  });
+
+  it('延遲補償最多扣 250ms，避免謊報延遲作弊', () => {
+    const h = new Harness();
+    h.startWith(['c1', 'c2', 'c3']);
+    const g = h.core.d.game!;
+    g.prompt = { kind: 'slap', actor: 0, players: [1, 2], slaps: [] };
+    g.timer = { id: 999, ms: TIMING.slapMs };
+    h.core.d.deadlineTimerId = 999;
+    h.core.d.slapStartedAt = h.now;
+    h.send('c2', { type: 'ping', t: 0, rtt: 2000 });
+    h.now += 1000;
+    h.send('c2', { type: 'action', action: { type: 'slap' } });
+    expect(h.core.d.game!.prompt).toMatchObject({ slaps: [{ player: 1, t: 750 }] });
+  });
+
   it('ping 會回 pong，並記錄延遲', () => {
     const h = new Harness();
     h.join('c1', 'A');

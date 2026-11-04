@@ -12,6 +12,7 @@
   --danger: #ff5a5f;
   --warn: #ffd166;
   --ok: #4ade80;
+  --card-w-xs: 26px;
   --card-w-sm: 52px;
   --card-w-md: clamp(62px, 14vw, 104px);
   --card-w-lg: clamp(78px, 18vw, 128px);
@@ -288,6 +289,13 @@ input {
   display: block;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
   user-select: none;
+}
+.card-xs {
+  width: var(--card-w-xs);
+}
+.card-xs img {
+  border-radius: 3px;
+  box-shadow: none;
 }
 .card-sm {
   width: var(--card-w-sm);
@@ -685,6 +693,144 @@ input {
   z-index: 50;
   max-width: calc(100vw - 32px);
   cursor: pointer;
+}
+
+/* ── M4：表頭、事件聚光燈、被指定提醒、動作鏈、規則 ── */
+.head-actions {
+  display: flex;
+  gap: 0.2rem;
+}
+.center {
+  position: relative;
+}
+.spotlight {
+  position: absolute;
+  top: 32%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+  padding: 0.8rem 1.1rem;
+  border-radius: 16px;
+  background: rgba(4, 24, 38, 0.94);
+  border: 2px solid var(--line);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+  pointer-events: none;
+  max-width: min(92vw, 460px);
+  animation: spot-in 0.22s ease-out;
+}
+.spotlight.tone-danger {
+  border-color: var(--danger);
+}
+.spotlight.tone-good {
+  border-color: var(--ok);
+}
+.spot-text {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+.spot-text strong {
+  font-size: 1.15rem;
+}
+.spot-text span {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+@keyframes spot-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(0.85);
+  }
+}
+.chain-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+.response-bar {
+  align-items: center;
+  padding: 0.4rem;
+  border-radius: 12px;
+}
+.response-bar.targeted {
+  background: rgba(255, 90, 95, 0.18);
+  border: 2px solid var(--danger);
+  animation: pulse-danger 1s infinite;
+}
+.target-alert {
+  width: 100%;
+  text-align: center;
+  color: #ffd0d1;
+}
+@keyframes pulse-danger {
+  50% {
+    box-shadow: 0 0 0 5px rgba(255, 90, 95, 0.25);
+  }
+}
+.rules {
+  width: min(680px, 100%);
+}
+.rules-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.rules h3 {
+  margin: 0.4rem 0;
+  color: var(--accent);
+}
+.rules ul,
+.rules ol {
+  margin: 0;
+  padding-left: 1.3rem;
+  line-height: 1.6;
+}
+.rules-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin-bottom: 0.5rem;
+}
+.rules-layer {
+  writing-mode: vertical-rl;
+  color: var(--muted);
+}
+.rules-cards {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+.rules-cards figure {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  font-size: 0.75rem;
+  gap: 0.2rem;
+}
+.rules-functions {
+  list-style: none;
+  padding: 0 !important;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 0.5rem;
+}
+.rules-functions li {
+  display: flex;
+  gap: 0.6rem;
+  align-items: center;
+}
+.rules-functions div {
+  display: flex;
+  flex-direction: column;
+  font-size: 0.88rem;
+  line-height: 1.35;
+}
+.rules-functions span {
+  color: var(--muted);
 }
 
 @media (max-width: 600px) {

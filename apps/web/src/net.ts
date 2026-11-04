@@ -78,10 +78,13 @@ export function useRoom(code: string, name: string | null) {
     const ws = new PartySocket({ host: location.host, party: 'room', room: code });
     sockRef.current = ws;
     const send = (m: ClientMessage) => ws.send(JSON.stringify(m));
+    let rttReported = false;
 
     const onOpen = () => {
       setState((s) => ({ ...s, status: 'open' }));
       send({ type: 'join', name, token: loadToken(code) });
+      // 一連上就量延遲，讓 Watch Out 的延遲補償從第一回合就有效
+      send({ type: 'ping', t: Date.now(), rtt: rttRef.current });
     };
     const onClose = () => setState((s) => (s.status === 'notFound' ? s : { ...s, status: 'reconnecting' }));
     const onMessage = (e: MessageEvent) => {
@@ -120,9 +123,15 @@ export function useRoom(code: string, name: string | null) {
             setState((s) => ({ ...s, error: { code: msg.code, message: msg.message, at: Date.now() } }));
           }
           break;
-        case 'pong':
+        case 'pong': {
           rttRef.current = Date.now() - msg.t;
+          // 第一次量到後立刻回報給伺服器
+          if (!rttReported) {
+            rttReported = true;
+            send({ type: 'ping', t: Date.now(), rtt: rttRef.current });
+          }
           break;
+        }
       }
     };
     ws.addEventListener('open', onOpen);

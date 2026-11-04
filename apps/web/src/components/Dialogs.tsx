@@ -13,9 +13,22 @@ function Modal({ title, children }: { title: string; children: ReactNode }) {
   );
 }
 
-export function PlacePufferDialog({ deckCount, onPlace }: { deckCount: number; onPlace: (pos: number) => void }) {
+export function PlacePufferDialog({
+  deckCount,
+  nextName,
+  onPlace,
+}: {
+  deckCount: number;
+  nextName: string;
+  onPlace: (pos: number) => void;
+}) {
   const [pos, setPos] = useState(0);
-  const label = pos === 0 ? '最上面（下一張就是它）' : pos === deckCount ? '最下面' : `從上面數第 ${pos + 1} 張`;
+  const label =
+    pos === 0
+      ? `最上面（${nextName} 下一張就會抽到）`
+      : pos === deckCount
+        ? '最下面'
+        : `從上面數第 ${pos + 1} 張`;
   return (
     <Modal title="🐡 把河豚放回牌堆">
       <p>用 Chill 擋下了！選擇河豚要放回的位置，其他人不會知道。</p>
@@ -165,9 +178,20 @@ export function SlapOverlay({
       <div className="slap">
         <h2>⚠️ Watch Out！</h2>
         {mustSlap ? (
-          <button className="slap-target" onClick={onSlap} autoFocus>
+          <button
+            className="slap-target"
+            autoFocus
+            onPointerDown={(e) => {
+              // 按下就算，不等放開，對手機比較公平
+              e.preventDefault();
+              onSlap();
+            }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') onSlap();
+            }}
+          >
             <CardView kind="watchout" size="lg" />
-            <span>快拍！</span>
+            <span>快拍！（或按空白鍵）</span>
           </button>
         ) : (
           <>
