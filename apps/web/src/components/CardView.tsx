@@ -3,17 +3,20 @@ import { CARD_HELP, cardImg, cardName } from '../cards';
 
 interface Props {
   kind: CardKind | 'back';
-  size?: 'xs' | 'sm' | 'md' | 'lg';
+  size?: 'xs' | 'sm' | 'md' | 'lg' | 'hand';
   selected?: boolean;
   disabled?: boolean;
   badge?: string;
   onClick?: () => void;
+  /** 手牌 id（動畫用） */
+  cardId?: string;
+  className?: string;
 }
 
-export function CardView({ kind, size = 'md', selected, disabled, badge, onClick }: Props) {
+export function CardView({ kind, size = 'md', selected, disabled, badge, onClick, cardId, className }: Props) {
   const label = kind === 'back' ? '牌背' : cardName(kind);
   const title = kind === 'back' ? undefined : `${label}：${CARD_HELP[kind]}`;
-  const cls = `card card-${size}${selected ? ' selected' : ''}${disabled ? ' disabled' : ''}${onClick ? ' clickable' : ''}`;
+  const cls = `card card-${size}${selected ? ' selected' : ''}${disabled ? ' disabled' : ''}${onClick ? ' clickable' : ''}${className ? ` ${className}` : ''}`;
   const inner = (
     <>
       <img src={cardImg(kind)} alt={label} draggable={false} />
@@ -21,11 +24,19 @@ export function CardView({ kind, size = 'md', selected, disabled, badge, onClick
     </>
   );
   return onClick ? (
-    <button type="button" className={cls} title={title} onClick={onClick} disabled={disabled} aria-pressed={selected}>
+    <button
+      type="button"
+      className={cls}
+      title={title}
+      onClick={onClick}
+      disabled={disabled}
+      aria-pressed={selected}
+      data-card-id={cardId}
+    >
       {inner}
     </button>
   ) : (
-    <div className={cls} title={title}>
+    <div className={cls} title={title} data-card-id={cardId}>
       {inner}
     </div>
   );

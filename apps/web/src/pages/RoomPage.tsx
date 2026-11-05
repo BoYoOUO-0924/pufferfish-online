@@ -1,6 +1,8 @@
 import { MAX_NAME_LENGTH } from '@pufferfish/protocol';
 import { useEffect, useState } from 'react';
 import { Lobby } from '../components/Lobby';
+import { Mascot } from '../components/Mascot';
+import { Bubbles } from './Home';
 import { Table } from '../components/Table';
 import { clearToken, useRoom } from '../net';
 import { loadName, navigate, saveName } from '../router';
@@ -16,7 +18,9 @@ function NameGate({ code, onDone }: { code: string; onDone: (n: string) => void 
   const trimmed = value.trim();
   return (
     <main className="home">
-      <h1>加入房間 {code}</h1>
+      <Bubbles />
+      <Mascot size={96} />
+      <h1 className="page-title">加入房間 {code}</h1>
       <form
         className="panel"
         onSubmit={(e) => {
@@ -28,7 +32,7 @@ function NameGate({ code, onDone }: { code: string; onDone: (n: string) => void 
       >
         <label className="field">
           <span>暱稱</span>
-          <input value={value} maxLength={MAX_NAME_LENGTH} autoFocus onChange={(e) => setValue(e.target.value)} />
+          <input value={value} maxLength={MAX_NAME_LENGTH} autoFocus autoComplete="nickname" onChange={(e) => setValue(e.target.value)} />
         </label>
         <button className="btn primary big" disabled={!trimmed}>
           進入房間
@@ -57,7 +61,9 @@ function Connected({ code, name }: { code: string; name: string }) {
   if (room.status === 'notFound') {
     return (
       <main className="home">
-        <h1>找不到房間 {code}</h1>
+        <Bubbles />
+        <Mascot size={96} />
+        <h1 className="page-title">找不到房間 {code}</h1>
         <p className="subtitle">房號可能打錯了，或房間已經關閉。</p>
         <button className="btn primary" onClick={() => navigate('/')}>
           回首頁
@@ -70,7 +76,9 @@ function Connected({ code, name }: { code: string; name: string }) {
   if (fatal) {
     return (
       <main className="home">
-        <h1>無法加入</h1>
+        <Bubbles />
+        <Mascot size={96} />
+        <h1 className="page-title">無法加入</h1>
         <p className="subtitle">{room.error!.message}</p>
         <button className="btn primary" onClick={() => navigate('/')}>
           回首頁
@@ -80,14 +88,17 @@ function Connected({ code, name }: { code: string; name: string }) {
   }
 
   let body;
-  if (!room.room || !room.playerId) body = <p className="loading">連線中…</p>;
+  if (!room.room || !room.playerId) body = <Loading text="連線中…" />;
   else if (room.room.phase === 'lobby') body = <Lobby room={room} onLeave={leave} />;
   else if (room.view) body = <Table room={room} onLeave={leave} />;
-  else body = <p className="loading">載入中…</p>;
+  else body = <Loading text="載入中…" />;
 
   return (
     <>
-      {room.status === 'reconnecting' && <div className="banner warn">連線中斷，正在重新連線…</div>}
+      {room.status === 'reconnecting' && <div className="banner warn" role="status">
+          <span className="spinner" aria-hidden="true" />
+          連線中斷，正在重新連線…
+        </div>}
       {room.error && (
         <div className="toast" role="alert" onClick={room.dismissError}>
           {room.error.message}
@@ -95,5 +106,15 @@ function Connected({ code, name }: { code: string; name: string }) {
       )}
       {body}
     </>
+  );
+}
+
+function Loading({ text }: { text: string }) {
+  return (
+    <main className="home loading">
+      <Bubbles />
+      <Mascot size={96} interactive={false} />
+      <p className="subtitle">{text}</p>
+    </main>
   );
 }

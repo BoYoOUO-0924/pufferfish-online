@@ -109,6 +109,22 @@ describe('房間：加入與大廳', () => {
     expect(h.last('c6', 'error').code).toBe('roomFull');
   });
 
+  it('房主可以切換規則版本，開局後套用；其他人不能切換', () => {
+    const h = new Harness();
+    h.join('c1', 'A');
+    h.join('c2', 'B');
+    expect(h.last('c2', 'room').variant).toBe('classic');
+    h.send('c2', { type: 'setVariant', variant: 'deep' });
+    expect(h.last('c2', 'error').code).toBe('notHost');
+    h.send('c1', { type: 'setVariant', variant: 'deep' });
+    expect(h.last('c2', 'room').variant).toBe('deep');
+    h.send('c1', { type: 'addBot' });
+    h.send('c1', { type: 'start' });
+    expect(h.last('c2', 'state').view.variant).toBe('deep');
+    h.send('c1', { type: 'setVariant', variant: 'classic' });
+    expect(h.last('c1', 'error').code).toBe('wrongPhase');
+  });
+
   it('只有房主能加電腦、開始；少於 3 人不能開始', () => {
     const h = new Harness();
     h.join('c1', 'A');

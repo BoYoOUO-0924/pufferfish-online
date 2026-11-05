@@ -10,7 +10,7 @@ describe('§6 回應時間窗與 No way', () => {
     let s = setup({ hands: [['steal'], ['seal'], ['seal']], at: 'play' });
     s = play(s, 0, [id(s, 0, 'steal')], 1);
     expect(s.prompt).toEqual({ kind: 'response', declined: [0] });
-    expect(s.timer?.ms).toBe(4000);
+    expect(s.timer?.ms).toBe(6000);
   });
 
   it('No way 取消 Steal：牌照樣進棄牌堆，回合結束', () => {

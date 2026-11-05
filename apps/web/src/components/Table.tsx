@@ -2,10 +2,21 @@ import type { CardKind, PlayerView, PlayKind } from '@pufferfish/engine';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { PLAY_NAMES, cardName, describeEvent, describeSelection, sortHand } from '../cards';
 import { useCountdown, type RoomHandle } from '../net';
+import { sfx, useMuted } from '../sfx';
 import { CardView } from './CardView';
-import { ChefDialog, FisherDialog, GameOverDialog, PlacePufferDialog, SlapOverlay } from './Dialogs';
+import {
+  ChefDialog,
+  FisherDialog,
+  GameOverDialog,
+  PlacePufferDialog,
+  SlapOverlay,
+  SonarDialog,
+} from './Dialogs';
+import { FxLayer } from './FxLayer';
+import { Icon } from './Icon';
+import { Avatar } from './Mascot';
 import { RulesDialog } from './RulesDialog';
-import { Spotlight } from './Spotlight';
+import { Deck, DirectionRing, Discard, Hand, Seat, TimerRing } from './TableParts';
 
 const PLAY_KIND_CARD: Partial<Record<PlayKind, CardKind>> = {
   steal: 'steal',
@@ -31,6 +42,7 @@ const PLAY_KIND_NAMES: Record<PlayKind, string> = {
   net: PLAY_NAMES.net!,
   fisher: PLAY_NAMES.fisher!,
   torpedo: PLAY_NAMES.torpedo!,
+  sonar: PLAY_NAMES.sonar!,
 };
 
 export function Table({ room, onLeave }: { room: RoomHandle; onLeave: () => void }) {
@@ -43,6 +55,7 @@ export function Table({ room, onLeave }: { room: RoomHandle; onLeave: () => void
   const [targeting, setTargeting] = useState(false);
   const [showLog, setShowLog] = useState(false);
   const [showRules, setShowRules] = useState(false);
+  const [muted, setMuted] = useMuted();
 
   const alive = v.players[me]?.alive ?? false;
   const myDraw = prompt?.kind === 'draw' && prompt.player === me;
@@ -56,7 +69,11 @@ export function Table({ room, onLeave }: { room: RoomHandle; onLeave: () => void
     v.chain.target === me &&
     ['steal', 'salmon', 'switch'].includes(v.chain.play);
   const myChoice =
-    (prompt?.kind === 'placePuffer' || prompt?.kind === 'fisher' || prompt?.kind === 'chef') && prompt.player === me;
+    (prompt?.kind === 'placePuffer' ||
+      prompt?.kind === 'fisher' ||
+      prompt?.kind === 'chef' ||
+      prompt?.kind === 'sonar') &&
+    prompt.player === me;
   const needsMe = myDraw || myPlay || myChoice || targeted || mustSlap;
 
   // 輪到你／被指定／要拍牌時：手機震動，分頁在背景時改標題提醒
@@ -68,9 +85,10 @@ export function Table({ room, onLeave }: { room: RoomHandle; onLeave: () => void
     } catch {
       // 不支援震動
     }
+    if (targeted) sfx('alarm');
     const original = '河豚愛生氣 線上版';
-    const label = mustSlap ? '🖐️ 快拍！' : targeted ? '⚠️ 你被指定了！' : '🔔 輪到你了！';
-    const update = () => (document.title = document.hidden ? label : original);
+    const label = mustSlap ? '快拍！' : targeted ? '你被指定了！' : '輪到你了！';
+    const update = () => (document.title = document.hidden ? `【${label}】${original}` : original);
     update();
     document.addEventListener('visibilitychange', update);
     return () => {
@@ -78,6 +96,12 @@ export function Table({ room, onLeave }: { room: RoomHandle; onLeave: () => void
       document.title = original;
     };
   }, [needsMe, mustSlap, targeted]);
+
+  // 自己的回合最後 5 秒滴答聲
+  const secLeft = remaining === null ? null : Math.ceil(remaining);
+  useEffect(() => {
+    if ((myDraw || myPlay || myChoice) && secLeft !== null && secLeft <= 5 && secLeft > 0) sfx('urgent');
+  }, [secLeft, myDraw, myPlay, myChoice]);
 
   // 手牌變動時移除已不在手上的選取；不是出牌階段時取消指定對象
   useEffect(() => {
@@ -88,10 +112,11 @@ export function Table({ room, onLeave }: { room: RoomHandle; onLeave: () => void
   }, [myPlay]);
 
   const selCards = selected.map((id) => v.hand.find((c) => c.id === id)).filter((c) => c !== undefined);
-  const selInfo = describeSelection(selCards, v.discard.length);
+  const selInfo = describeSelection(selCards, v.discard.length, v.variant);
 
   const toggle = (id: string) => {
     if (!myPlay) return;
+    sfx('tap');
     setTargeting(false);
     setSelected((s) => (s.includes(id) ? s.filter((x) => x !== id) : [...s, id]));
   };
@@ -105,9 +130,9 @@ export function Table({ room, onLeave }: { room: RoomHandle; onLeave: () => void
   const others = v.players.map((_, i) => (me + 1 + i) % v.players.length).filter((i) => i !== me);
   const seatOf = (i: number) => info.seats.find((s) => s.id === v.players[i]!.id);
   const nameOf = (i: number) => (i === me ? '你' : v.players[i]!.name);
-  const top = v.discard[v.discard.length - 1];
+  const playing = v.phase === 'playing';
 
-  // 快捷鍵：空白鍵抽牌／拍牌、Enter 出牌、N No way、P Pass、Esc 不回應
+  // 快捷鍵：空白鍵抽牌／拍牌、Enter 出牌、E 結束出牌、N No way、P Pass、Esc 不回應
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (isTyping(e) || e.repeat) return;
@@ -119,6 +144,9 @@ export function Table({ room, onLeave }: { room: RoomHandle; onLeave: () => void
         e.preventDefault();
         if (selInfo.needsTarget) setTargeting(true);
         else playSelected();
+      } else if (key === 'e' && myPlay && prompt.canEnd && !targeting) {
+        e.preventDefault();
+        room.act({ type: 'endPlays' });
       } else if (prompt?.kind === 'response' && alive) {
         const noway = v.hand.find((c) => c.kind === 'noway');
         const pass = v.hand.find((c) => c.kind === 'pass');
@@ -134,90 +162,94 @@ export function Table({ room, onLeave }: { room: RoomHandle; onLeave: () => void
   });
 
   const canTarget = (i: number) =>
-    targeting &&
-    v.players[i]!.alive &&
-    !(selCards[0]?.kind === 'steal' && v.players[i]!.handCount === 0);
+    targeting && v.players[i]!.alive && !(selCards[0]?.kind === 'steal' && v.players[i]!.handCount === 0);
 
   return (
-    <main className="table">
+    <main className={`table${targeting ? ' is-targeting' : ''}${targeted ? ' is-targeted' : ''}`}>
+      <FxLayer room={room} />
+      <div className="sea-rays" aria-hidden="true" />
+
       <header className="table-head">
-        <button className="btn ghost small" onClick={onLeave}>
-          ← 離開
+        <button className="icon-btn" onClick={onLeave} aria-label="離開房間" title="離開">
+          <Icon name="exit" />
         </button>
-        <span className="head-info">
-          房號 <strong>{info.code}</strong> · 第 {v.turnCount} 回合 · {v.direction === 1 ? '↻ 順時針' : '↺ 逆時針'}
-        </span>
-        <span className="head-actions">
-          <button className="btn ghost small" onClick={() => setShowRules(true)}>
-            規則
+        <div className="head-info">
+          <span className="chip">
+            房號 <strong>{info.code}</strong>
+          </span>
+          <span className="chip">第 {v.turnCount} 回合</span>
+        </div>
+        <div className="head-actions">
+          <button
+            className="icon-btn"
+            onClick={() => setMuted(!muted)}
+            aria-label={muted ? '開啟音效' : '關閉音效'}
+            title={muted ? '開啟音效' : '關閉音效'}
+          >
+            <Icon name={muted ? 'volumeOff' : 'volume'} />
           </button>
-          <button className="btn ghost small" onClick={() => setShowLog((x) => !x)}>
-            {showLog ? '關閉紀錄' : '紀錄'}
+          <button className="icon-btn" onClick={() => setShowRules(true)} aria-label="遊戲規則" title="規則">
+            <Icon name="book" />
           </button>
-        </span>
+          <button
+            className={`icon-btn${showLog ? ' active' : ''}`}
+            onClick={() => setShowLog((x) => !x)}
+            aria-label="出牌紀錄"
+            title="紀錄"
+          >
+            <Icon name="list" />
+          </button>
+        </div>
       </header>
 
-      <section className="opponents">
-        {others.map((i) => {
-          const p = v.players[i]!;
-          const seat = seatOf(i);
-          const isTurn = v.turn === i && v.phase === 'playing';
-          const clickable = canTarget(i);
-          return (
-            <button
-              key={p.id}
-              type="button"
-              className={`opponent${isTurn ? ' turn' : ''}${p.alive ? '' : ' dead'}${clickable ? ' targetable' : ''}`}
-              disabled={!clickable}
-              onClick={() => clickable && playSelected(i)}
-            >
-              <span className="avatar">{p.isBot ? '🤖' : p.name.slice(0, 1)}</span>
-              <span className="opp-name">{p.name}</span>
-              <span className="opp-meta">
-                {p.alive ? `手牌 ${p.handCount}` : '已淘汰'}
-                {seat?.botControlled && ' · 代打中'}
-                {seat && !seat.connected && !seat.isBot && ' · 離線'}
-              </span>
-              {isTurn && <span className="turn-dot" aria-label="輪到他" />}
-            </button>
-          );
-        })}
-      </section>
-
-      <section className="center">
-        <Spotlight room={room} />
-        <div className="piles">
-          <div className="pile">
-            <CardView
-              kind="back"
-              size="lg"
-              onClick={myDraw ? () => room.act({ type: 'draw' }) : undefined}
-              selected={myDraw}
+      <section className={`seats n${others.length}`}>
+        {others.map((i, k) => (
+          <div key={v.players[i]!.id} className="seat-wrap" style={{ ['--k' as string]: k, ['--n' as string]: others.length }}>
+            <Seat
+              view={v}
+              index={i}
+              seat={seatOf(i)}
+              turn={v.turn === i && playing}
+              targetable={canTarget(i)}
+              onTarget={() => playSelected(i)}
+              deadline={room.deadline}
             />
-            <span className="pile-label">牌堆 {v.deckCount}</span>
           </div>
-          <div className="pile">
-            {top ? <CardView kind={top.kind} size="lg" /> : <div className="card card-lg empty-slot" />}
-            <span className="pile-label">棄牌 {v.discard.length}</span>
-          </div>
-        </div>
-        <StatusBar view={v} nameOf={nameOf} remaining={remaining} />
-        {v.chain && <ChainInfo view={v} nameOf={nameOf} />}
-        {prompt?.kind === 'response' && alive && (
-          <ResponseBar room={room} view={v} targeted={targeted} />
-        )}
+        ))}
       </section>
 
-      <section className={`my-area${v.turn === me && v.phase === 'playing' ? ' my-turn' : ''}`}>
+      <section className="felt">
+        <DirectionRing direction={v.direction} />
+        <StatusBar view={v} nameOf={nameOf} remaining={remaining} />
+        <div className="piles">
+          <Deck count={v.deckCount} canDraw={myDraw} onDraw={() => room.act({ type: 'draw' })} known={v.knownTop} />
+          <span className="center-anchor" data-anchor="center" />
+          <Discard cards={v.discard} />
+        </div>
+        {v.chain && <ChainInfo view={v} nameOf={nameOf} />}
+      </section>
+
+      <section className={`my-area${v.turn === me && playing ? ' my-turn' : ''}${alive ? '' : ' spectating'}`}>
+        {prompt?.kind === 'response' && alive && <ResponseBar room={room} view={v} targeted={targeted} />}
         <div className="my-head">
-          <span>
-            {v.players[me]!.name}（你）{alive ? `· ${v.hand.length} 張` : '· 已淘汰，觀戰中'}
+          <span className="me-badge">
+            <span className="seat-avatar" data-anchor={`seat:${me}`}>
+              <Avatar name={v.players[me]!.name} isBot={false} seat={me} size={40} />
+              {v.turn === me && playing && <TimerRing deadline={room.deadline} totalMs={v.timer?.ms ?? null} size={50} />}
+            </span>
+            <span className="me-name">
+              <span>
+                {v.players[me]!.name}
+                {v.players[me]!.deepDive && <span className="seat-tag dive">深潛中</span>}
+              </span>
+              <small>{alive ? `${v.hand.length} 張手牌` : '已淘汰・觀戰中'}</small>
+            </span>
           </span>
           {myPlay && (
             <div className="play-controls">
               {targeting ? (
                 <>
-                  <span className="hint">點選上方玩家作為對象</span>
+                  <span className="hint pulse-text">點選上方玩家作為對象</span>
                   <button className="btn small ghost" onClick={() => setTargeting(false)}>
                     取消
                   </button>
@@ -232,27 +264,30 @@ export function Table({ room, onLeave }: { room: RoomHandle; onLeave: () => void
                   >
                     {selInfo.needsTarget ? '選擇對象' : '出牌'}
                   </button>
+                  {prompt.canEnd && (
+                    <button className="btn warn" onClick={() => room.act({ type: 'endPlays' })} title="結束出牌並抽牌（E）">
+                      結束出牌
+                    </button>
+                  )}
                 </>
               )}
             </div>
           )}
+          {myDraw && <span className="hint pulse-text">點牌堆抽一張牌（空白鍵）</span>}
         </div>
-        <div className={`hand${hand.length > 8 ? ' crowded' : ''}`}>
-          {hand.map((c) => (
-            <CardView
-              key={c.id}
-              kind={c.kind}
-              selected={selected.includes(c.id)}
-              onClick={myPlay ? () => toggle(c.id) : undefined}
-            />
-          ))}
-          {hand.length === 0 && <p className="hint">沒有手牌</p>}
-        </div>
+        <Hand cards={hand} selected={selected} onToggle={toggle} playable={myPlay} />
       </section>
 
       {showLog && <EventLog room={room} onClose={() => setShowLog(false)} />}
-      {showRules && <RulesDialog onClose={() => setShowRules(false)} />}
+      {showRules && <RulesDialog variant={v.variant} onClose={() => setShowRules(false)} />}
 
+      {prompt?.kind === 'sonar' && prompt.player === me && prompt.cards && (
+        <SonarDialog
+          cards={prompt.cards}
+          nextName={nameOf(nextAliveFrom(v, me))}
+          onDone={(order) => room.act({ type: 'sonarArrange', order })}
+        />
+      )}
       {prompt?.kind === 'placePuffer' && prompt.player === me && (
         <PlacePufferDialog
           deckCount={prompt.deckCount}
@@ -284,8 +319,8 @@ export function Table({ room, onLeave }: { room: RoomHandle; onLeave: () => void
       )}
       {v.phase === 'ended' && (
         <GameOverDialog
-          winner={v.winner === null ? '?' : nameOf(v.winner)}
-          youWon={v.winner === me}
+          view={v}
+          winner={v.winner}
           reason={v.winReason}
           isHost={info.hostId === room.playerId}
           onRematch={() => room.send({ type: 'rematch' })}
@@ -335,10 +370,24 @@ function StatusBar({
   else if (p) {
     switch (p.kind) {
       case 'draw':
-        text = p.player === me ? '你的回合：點牌堆抽一張牌' : `${nameOf(p.player)} 抽牌中`;
+        text =
+          p.player === me
+            ? v.players[me]?.deepDive
+              ? '出牌結束：從牌堆底抽一張'
+              : v.variant === 'deep'
+                ? '出牌結束：抽一張牌'
+                : '你的回合：抽一張牌'
+            : `${nameOf(p.player)} 抽牌中`;
         break;
       case 'play':
-        text = p.player === me ? '你的回合：選擇要打出的牌' : `${nameOf(p.player)} 正在出牌`;
+        text =
+          p.player === me
+            ? p.canEnd
+              ? '可以繼續出牌，或按「結束出牌」去抽牌'
+              : v.variant === 'deep'
+                ? '你的回合：先打出至少 1 次牌'
+                : '你的回合：選擇要打出的牌'
+            : `${nameOf(p.player)} 正在出牌`;
         break;
       case 'placePuffer':
         text = p.player === me ? '選擇河豚要放回的位置' : `${nameOf(p.player)} 正在把河豚放回牌堆`;
@@ -355,23 +404,17 @@ function StatusBar({
       case 'slap':
         text = 'Watch Out！快拍！';
         break;
+      case 'sonar':
+        text = p.player === me ? '聲納：重新排列牌堆頂' : `${nameOf(p.player)} 正在用聲納排列牌堆頂`;
+        break;
     }
   }
   const total = v.timer ? v.timer.ms / 1000 : null;
-  const pct = remaining !== null && total ? Math.min(100, (remaining / total) * 100) : 0;
+  const shown = remaining !== null && v.phase === 'playing' ? Math.min(Math.ceil(remaining), total ?? Infinity) : null;
   return (
-    <div className="status">
+    <div className="status" key={text}>
       <span className="status-text">{text}</span>
-      {remaining !== null && v.phase === 'playing' && (
-        <>
-          <span className={`status-time${remaining <= 5 ? ' urgent' : ''}`}>
-            {Math.min(Math.ceil(remaining), total ?? Infinity)}s
-          </span>
-          <div className="timer-bar">
-            <div style={{ width: `${pct}%` }} />
-          </div>
-        </>
-      )}
+      {shown !== null && <span className={`status-time${shown <= 5 ? ' urgent' : ''}`}>{shown}</span>}
     </div>
   );
 }
@@ -379,30 +422,30 @@ function StatusBar({
 function ChainInfo({ view: v, nameOf }: { view: PlayerView; nameOf: (i: number) => string }) {
   const ch = v.chain!;
   return (
-    <div className="chain">
+    <div className={`chain${ch.baseCancelled ? ' cancelled' : ''}`}>
       {ch.items.map((it, i) => (
-        <span key={i} className={`chain-item${it.cancelled ? ' cancelled' : ''}`}>
+        <span key={i} className={`chain-item${it.cancelled ? ' cancelled' : ''}`} style={{ ['--i' as string]: i }}>
           <CardView kind={chainCard(v, it.kind)} size="xs" />
           {it.kind === 'base' && (
-            <>
-              {nameOf(it.player)} 打出 <strong>{PLAY_KIND_NAMES[ch.play]}</strong>
+            <span>
+              {nameOf(it.player)} <strong>{v.variant === 'deep' && ch.play === 'net' ? '拖網' : PLAY_KIND_NAMES[ch.play]}</strong>
               {ch.items.length === 1 && ch.target !== undefined && ` → ${nameOf(ch.target)}`}
-            </>
+            </span>
           )}
           {it.kind === 'noway' && (
-            <>
-              {nameOf(it.player)}：<strong>No way!</strong>
-            </>
+            <span>
+              {nameOf(it.player)} <strong>No way!</strong>
+            </span>
           )}
           {it.kind === 'pass' && (
-            <>
-              {nameOf(it.player)}：<strong>Pass</strong> → {nameOf(it.to!)}
-            </>
+            <span>
+              {nameOf(it.player)} <strong>Pass</strong> → {nameOf(it.to!)}
+            </span>
           )}
         </span>
       ))}
       <span className="chain-result">
-        {ch.baseCancelled ? '目前：會被取消' : `目前：會生效${ch.target !== undefined ? `（對象 ${nameOf(ch.target)}）` : ''}`}
+        {ch.baseCancelled ? '會被取消' : `會生效${ch.target !== undefined ? `・對象 ${nameOf(ch.target)}` : ''}`}
       </span>
     </div>
   );
@@ -414,41 +457,51 @@ function chainCard(v: PlayerView, kind: 'base' | 'noway' | 'pass'): CardKind | '
   const ch = v.chain!;
   const fn = PLAY_KIND_CARD[ch.play];
   if (fn) return fn;
-  const size = ch.play === 'net' ? 2 : ch.play === 'fisher' ? 3 : 4;
+  const size = ch.play === 'net' ? 2 : ch.play === 'fisher' || v.variant === 'deep' ? 3 : 4;
   const responses = ch.items.length - 1;
   return v.discard[v.discard.length - 1 - responses - (size - 1)]?.kind ?? 'back';
 }
 
 function ResponseBar({ room, view: v, targeted }: { room: RoomHandle; view: PlayerView; targeted: boolean }) {
   const p = v.prompt;
+  const deadline = room.deadline;
   if (p?.kind !== 'response') return null;
   const noway = v.hand.find((c) => c.kind === 'noway');
   const pass = v.hand.find((c) => c.kind === 'pass');
   const canRespond = (noway && p.canNoway) || (pass && p.canPassTo !== null);
+  const total = v.timer?.ms ?? 6000;
+  const elapsed = deadline === null ? 0 : Math.max(0, total - (deadline - Date.now()));
   return (
-    <div className={`response-bar${targeted ? ' targeted' : ''}`}>
+    <div className={`response-bar${targeted ? ' targeted' : ''}`} role="group" aria-label="回應">
+      <div className="response-drain" key={deadline ?? 0}>
+        <i style={{ animationDuration: `${total}ms`, animationDelay: `-${elapsed}ms` }} />
+      </div>
       {targeted && (
         <strong className="target-alert">
-          ⚠️ 你被指定了！{canRespond ? '要回應嗎？' : '（沒有可以回應的牌）'}
+          <Icon name="hand" size={18} />
+          你被指定了！{canRespond ? '要回應嗎？' : '（沒有可以回應的牌）'}
         </strong>
       )}
-      {noway && (
-        <button
-          className="btn danger"
-          disabled={!p.canNoway}
-          onClick={() => room.act({ type: 'respond', card: noway.id })}
-        >
-          {cardName('noway')}！
+      <div className="response-btns">
+        {noway && (
+          <button
+            className="btn danger"
+            disabled={!p.canNoway}
+            onClick={() => room.act({ type: 'respond', card: noway.id })}
+          >
+            {cardName('noway')}！<kbd>N</kbd>
+          </button>
+        )}
+        {pass && p.canPassTo !== null && (
+          <button className="btn warn" onClick={() => room.act({ type: 'respond', card: pass.id })}>
+            Pass → {v.players[p.canPassTo]!.name}
+            <kbd>P</kbd>
+          </button>
+        )}
+        <button className="btn ghost" disabled={p.declinedByYou} onClick={() => room.act({ type: 'decline' })}>
+          {p.declinedByYou ? '已表示不回應' : '不回應'}
         </button>
-      )}
-      {pass && p.canPassTo !== null && (
-        <button className="btn warn" onClick={() => room.act({ type: 'respond', card: pass.id })}>
-          Pass → {v.players[p.canPassTo]!.name}
-        </button>
-      )}
-      <button className="btn ghost" disabled={p.declinedByYou} onClick={() => room.act({ type: 'decline' })}>
-        {p.declinedByYou ? '已表示不回應' : '不回應'}
-      </button>
+      </div>
     </div>
   );
 }
@@ -456,14 +509,14 @@ function ResponseBar({ room, view: v, targeted }: { room: RoomHandle; view: Play
 function EventLog({ room, onClose }: { room: RoomHandle; onClose: () => void }) {
   const end = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    end.current?.scrollIntoView({ block: 'end' });
+    end.current?.scrollIntoView({ block: 'end', behavior: 'smooth' });
   }, [room.log.length]);
   return (
-    <aside className="log">
+    <aside className="log" aria-label="出牌紀錄">
       <header>
         <strong>出牌紀錄</strong>
-        <button className="btn ghost small" onClick={onClose}>
-          ✕
+        <button className="icon-btn small" onClick={onClose} aria-label="關閉紀錄">
+          <Icon name="x" size={18} />
         </button>
       </header>
       <div className="log-body">
@@ -471,7 +524,7 @@ function EventLog({ room, onClose }: { room: RoomHandle; onClose: () => void }) 
           // 玩家名稱整局不變，用目前視角的名單（開局第一批事件可能比視角早到）
           const v = room.view;
           const names = v ? v.players.map((p) => p.name) : entry.names;
-          const text = describeEvent(entry.event, names, v?.you ?? entry.you);
+          const text = describeEvent(entry.event, names, v?.you ?? entry.you, v?.variant);
           return text ? (
             <p key={entry.id} className={entry.event.type === 'turnStart' ? 'log-turn' : ''}>
               {text}

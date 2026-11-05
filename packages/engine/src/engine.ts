@@ -17,6 +17,7 @@ import {
   type PlayerSeat,
   type Prompt,
   type Step,
+  type Variant,
 } from './types';
 
 export const MIN_PLAYERS = 3;
@@ -26,9 +27,11 @@ export const HAND_SIZE = 6;
 export const TIMING = {
   turnMs: 30_000,
   choiceMs: 30_000,
-  responseMs: 4_000,
+  responseMs: 6_000,
   slapMs: 5_000,
 };
+
+export const isDeep = (s: GameState) => s.variant === 'deep';
 
 export class EngineError extends Error {
   constructor(
@@ -51,7 +54,7 @@ interface Ctx {
 export function createGame(
   seats: PlayerSeat[],
   rng: Rng,
-  opts: { firstPlayer?: number } = {},
+  opts: { firstPlayer?: number; variant?: Variant } = {},
 ): ApplyResult {
   const n = seats.length;
   if (n < MIN_PLAYERS || n > MAX_PLAYERS) {
@@ -99,10 +102,32 @@ export function createGame(
     timer: null,
     timerSeq: 0,
     nextTurnOverride: null,
+    variant: opts.variant ?? 'classic',
+    deepDive: players.map(() => false),
+    turnPlays: 0,
+    known: players.map(() => []),
   };
   const ctx: Ctx = { s, rng, events: [] };
   run(ctx);
   return { state: s, events: ctx.events };
+}
+
+/**
+ * 深海變體：玩家記得的牌堆頂只在「牌堆頂還是那張」時有效。
+ * 抽走最上面一張後，第二張變成牌堆頂，記憶往前移一格；其他情況全部失效。
+ */
+function syncKnown(s: GameState): void {
+  if (!s.known) return;
+  s.known = s.known.map((list) => {
+    const out = [...list];
+    while (out.length && s.deck[0]?.id !== out[0]!.id) {
+      if (out[1] && s.deck[0]?.id === out[1].id) out.shift();
+      else return [];
+    }
+    // 中間被塞了牌（例如河豚放回第 2 張）：只保留仍對得上的部分
+    const keep = out.findIndex((c, i) => s.deck[i]?.id !== c.id);
+    return keep === -1 ? out : out.slice(0, keep);
+  });
 }
 
 // ───────────────────────── 套用動作 ─────────────────────────
@@ -113,6 +138,7 @@ export function applyAction(state: GameState, action: Action, rng: Rng): ApplyRe
   const ctx: Ctx = { s, rng, events: [] };
   handle(ctx, action);
   run(ctx);
+  syncKnown(s);
   return { state: s, events: ctx.events };
 }
 
@@ -132,6 +158,10 @@ function handle(ctx: Ctx, a: Action): void {
       return onFisherChoose(ctx, a.player, a.keep, a.returnOrder);
     case 'chefArrange':
       return onChefArrange(ctx, a.player, a.keep, a.order);
+    case 'endPlays':
+      return onEndPlays(ctx, a.player);
+    case 'sonarArrange':
+      return onSonarArrange(ctx, a.player, a.order);
     case 'slap':
       return onSlap(ctx, a.player, a.t);
     case 'timeout':
@@ -195,12 +225,26 @@ function exec(ctx: Ctx, step: Step): void {
     case 'beginTurn': {
       s.turnCount += 1;
       emit(ctx, { type: 'turnStart', player: s.turn });
+      if (isDeep(s)) {
+        // 深海變體：先出牌（可以連續出），最後才抽牌
+        s.turnPlays = 0;
+        return pushFront(ctx, { kind: 'promptPlay' });
+      }
       setPrompt(ctx, { kind: 'draw', player: s.turn });
       return;
     }
+    case 'drawPhase':
+      if (!s.players[s.turn]!.alive) return pushFront(ctx, { kind: 'endTurn' });
+      setPrompt(ctx, { kind: 'draw', player: s.turn });
+      return;
     case 'promptPlay': {
       const p = s.turn;
       if (!s.players[p]!.alive) return pushFront(ctx, { kind: 'endTurn' });
+      if (isDeep(s) && legalPlays(s, p).length === 0) {
+        // 沒有能出的牌：還沒出過就公告跳過，然後抽牌
+        if (!s.turnPlays) emit(ctx, { type: 'skipPlay', player: p });
+        return pushFront(ctx, { kind: 'drawPhase' });
+      }
       if (legalPlays(s, p).length === 0) {
         emit(ctx, { type: 'skipPlay', player: p });
         return pushFront(ctx, { kind: 'endTurn' });
@@ -209,6 +253,8 @@ function exec(ctx: Ctx, step: Step): void {
       return;
     }
     case 'endTurn': {
+      // 深潛只在這回合有效（例如出了魚雷沒抽牌）
+      if (s.deepDive) s.deepDive[s.turn] = false;
       if (s.nextTurnOverride !== null) {
         s.turn = s.nextTurnOverride;
         s.nextTurnOverride = null;
@@ -243,11 +289,17 @@ export function nextAlive(s: GameState, from: number): number {
   return from;
 }
 
-function drawCards(ctx: Ctx, player: number, count: number): Card[] {
+function drawCards(ctx: Ctx, player: number, count: number, fromBottom = false): Card[] {
   const { s } = ctx;
-  const cards = s.deck.splice(0, Math.min(count, s.deck.length));
+  const n = Math.min(count, s.deck.length);
+  const cards = fromBottom ? s.deck.splice(s.deck.length - n, n).reverse() : s.deck.splice(0, n);
   if (cards.length) {
-    emit(ctx, { type: 'draw', player, count: cards.length });
+    emit(
+      ctx,
+      fromBottom
+        ? { type: 'draw', player, count: cards.length, bottom: true }
+        : { type: 'draw', player, count: cards.length },
+    );
     emit(ctx, { type: 'gotCards', player, cards, to: [player] });
   }
   if (cards.length < count) emit(ctx, { type: 'deckEmpty', player });
@@ -373,9 +425,13 @@ export function classifyPlay(
   if (new Set(cards.map((c) => c.id)).size !== cards.length) {
     throw new EngineError('duplicateCard', '重複的牌');
   }
+  const deep = isDeep(s);
   if (cards.length === 1) {
     const kind = cards[0]!.kind;
-    if (isSpecies(kind)) return { label: 'discard' };
+    if (isSpecies(kind)) {
+      if (!deep) return { label: 'discard' };
+      return { label: (LAYERS.shallow as readonly string[]).includes(kind) ? 'snorkel' : 'deepdive' };
+    }
     switch (kind) {
       case 'chill':
         throw new EngineError('chillNotPlayable', 'Chill 不能主動打出');
@@ -399,6 +455,21 @@ export function classifyPlay(
     }
   }
   const kinds = cards.map((c) => c.kind);
+  if (kinds.every(isSpecies) && deep) {
+    const species = kinds as Species[];
+    const same = species.every((k) => k === species[0]);
+    if (same && cards.length === 2) {
+      const top = s.discard[s.discard.length - 1];
+      if (!top) throw new EngineError('emptyDiscard', '棄牌堆是空的，不能使用拖網');
+      return { label: 'net', netCardId: top.id };
+    }
+    if (same && cards.length === 3) return { label: 'torpedo' };
+    if (sameLayer(species) && new Set(species).size === cards.length) {
+      if (cards.length === 3) return { label: 'sonar' };
+      if (cards.length === 5) return { label: 'win' };
+    }
+    throw new EngineError('badCombo', '這個組合不能打出');
+  }
   if (kinds.every(isSpecies)) {
     const species = kinds as Species[];
     if (cards.length <= 4 && species.every((k) => k === species[0])) {
@@ -418,6 +489,22 @@ export function classifyPlay(
   throw new EngineError('badCombo', '這個組合不能打出');
 }
 
+/** 全部屬於同一海洋層時回傳該層 */
+function sameLayer(species: Species[]): keyof typeof LAYERS | null {
+  for (const [name, layer] of Object.entries(LAYERS) as [keyof typeof LAYERS, readonly string[]][]) {
+    if (species.every((k) => layer.includes(k))) return name;
+  }
+  return null;
+}
+
+/** 從陣列取出所有 k 個的組合 */
+function combos<T>(arr: readonly T[], k: number): T[][] {
+  if (k === 0) return [[]];
+  if (arr.length < k) return [];
+  const [head, ...rest] = arr;
+  return [...combos(rest, k - 1).map((c) => [head!, ...c]), ...combos(rest, k)];
+}
+
 export interface LegalPlay {
   cards: string[];
   label: PlayLabel;
@@ -434,7 +521,7 @@ export function legalPlays(s: GameState, player: number): LegalPlay[] {
     if (seen.has(c.kind)) continue;
     seen.add(c.kind);
     if (isSpecies(c.kind)) {
-      res.push({ cards: [c.id], label: 'discard' });
+      res.push({ cards: [c.id], label: classifyPlay(s, player, [c]).label });
       continue;
     }
     switch (c.kind) {
@@ -462,6 +549,22 @@ export function legalPlays(s: GameState, player: number): LegalPlay[] {
   for (const c of hand) {
     if (isSpecies(c.kind)) bySpecies.set(c.kind, [...(bySpecies.get(c.kind) ?? []), c]);
   }
+  if (isDeep(s)) {
+    for (const group of bySpecies.values()) {
+      if (group.length >= 2 && s.discard.length > 0) {
+        res.push({ cards: group.slice(0, 2).map((c) => c.id), label: 'net' });
+      }
+      if (group.length >= 3) res.push({ cards: group.slice(0, 3).map((c) => c.id), label: 'torpedo' });
+    }
+    for (const layer of Object.values(LAYERS)) {
+      const have = layer.filter((sp) => bySpecies.has(sp));
+      for (const trio of combos(have, 3)) {
+        res.push({ cards: trio.map((sp) => bySpecies.get(sp)![0]!.id), label: 'sonar' });
+      }
+      if (have.length === 5) res.push({ cards: have.map((sp) => bySpecies.get(sp)![0]!.id), label: 'win' });
+    }
+    return res;
+  }
   for (const group of bySpecies.values()) {
     for (let k = 2; k <= Math.min(4, group.length); k++) {
       if (k === 2 && s.discard.length === 0) continue;
@@ -482,9 +585,12 @@ function onDraw(ctx: Ctx, player: number): void {
   const p = requirePrompt(ctx.s, 'draw');
   if (p.player !== player) throw new EngineError('notYourTurn', '還沒輪到你');
   clearPrompt(ctx);
-  const cards = drawCards(ctx, player, 1);
+  // 深潛：這次從牌堆底抽
+  const bottom = !!ctx.s.deepDive?.[player];
+  if (bottom) ctx.s.deepDive![player] = false;
+  const cards = drawCards(ctx, player, 1, bottom);
   pushFront(ctx, ...cards.map((card): Step => ({ kind: 'gain', player, card })), {
-    kind: 'promptPlay',
+    kind: isDeep(ctx.s) ? 'endTurn' : 'promptPlay',
   });
 }
 
@@ -499,13 +605,31 @@ function onPlay(ctx: Ctx, player: number, ids: string[], target?: number): void 
     return c;
   });
   const cl = classifyPlay(s, player, cards, target);
+  const deep = isDeep(s);
+  // 深海變體：出完一次後回到出牌階段，可以繼續出或結束出牌
+  const after: Step = deep ? { kind: 'promptPlay' } : { kind: 'endTurn' };
+  if (deep) s.turnPlays = (s.turnPlays ?? 0) + 1;
   takeFromHand(s, player, ids);
   clearPrompt(ctx);
   s.discard.push(...cards);
   emit(ctx, { type: 'played', player, cards, play: cl.label, target: cl.target });
 
   if (cl.label === 'win') return endGame(ctx, player, 'collection');
-  if (cl.label === 'discard') return pushFront(ctx, { kind: 'endTurn' });
+  if (cl.label === 'discard') return pushFront(ctx, after);
+  if (cl.label === 'deepdive') {
+    if (s.deepDive) s.deepDive[player] = true;
+    return pushFront(ctx, after);
+  }
+  if (cl.label === 'snorkel') {
+    // 浮潛：只看不動
+    const top = s.deck[0];
+    if (top) {
+      emit(ctx, { type: 'peek', player, cards: [top], to: [player] });
+      if (s.known) s.known[player] = [top];
+    }
+    emit(ctx, { type: 'snorkeled', player });
+    return pushFront(ctx, after);
+  }
 
   s.chain = {
     actor: player,
@@ -514,8 +638,18 @@ function onPlay(ctx: Ctx, player: number, ids: string[], target?: number): void 
     netCardId: cl.netCardId,
     items: [{ kind: 'base', player, cardIds: ids }],
   };
-  pushFront(ctx, { kind: 'resolveChain' }, { kind: 'endTurn' });
+  pushFront(ctx, { kind: 'resolveChain' }, after);
   setPrompt(ctx, { kind: 'response', declined: [player] });
+}
+
+function onEndPlays(ctx: Ctx, player: number): void {
+  const { s } = ctx;
+  const p = requirePrompt(s, 'play');
+  if (!isDeep(s)) throw new EngineError('wrongPhase', '原版規則每回合只出一次牌');
+  if (p.player !== player) throw new EngineError('notYourTurn', '還沒輪到你');
+  if (!s.turnPlays) throw new EngineError('mustPlay', '每回合至少要出一次牌');
+  clearPrompt(ctx);
+  pushFront(ctx, { kind: 'drawPhase' });
 }
 
 export interface ChainEval {
@@ -611,6 +745,8 @@ function onPlacePuffer(ctx: Ctx, player: number, position: number): void {
     { type: 'pufferPlaced', player },
   );
   clearPrompt(ctx);
+  // 自己回合抽牌時用 Chill 擋下：回合直接結束，不用再出牌
+  if (!isDeep(s) && s.queue[0]?.kind === 'promptPlay' && s.turn === player) s.queue[0] = { kind: 'endTurn' };
 }
 
 function onFisherChoose(ctx: Ctx, player: number, keep: string[], returnOrder: string[]): void {
@@ -662,6 +798,21 @@ function onChefArrange(ctx: Ctx, player: number, keep: string, order: string[]):
     steps.push({ kind: 'gain', player: r, card });
   });
   pushFront(ctx, ...steps);
+}
+
+function onSonarArrange(ctx: Ctx, player: number, order: string[]): void {
+  const { s } = ctx;
+  const p = requirePrompt(s, 'sonar');
+  if (p.player !== player) throw new EngineError('notYou', '不是你在排序');
+  if (!isPermutation(order, p.cards.map((c) => c.id))) {
+    throw new EngineError('badChoice', '請排好所有牌的順序');
+  }
+  const byId = new Map(p.cards.map((c) => [c.id, c]));
+  const arranged = order.map((id) => byId.get(id)!);
+  s.deck.unshift(...arranged);
+  if (s.known) s.known[player] = arranged;
+  clearPrompt(ctx);
+  emit(ctx, { type: 'sonarDone', player, count: order.length });
 }
 
 function onSlap(ctx: Ctx, player: number, t: number): void {
@@ -722,8 +873,13 @@ export function defaultAction(s: GameState, rng: Rng): Action | null {
     case 'draw':
       return { type: 'draw', player: p.player };
     case 'play': {
+      // 深海變體：已經出過牌就直接結束出牌
+      if (isDeep(s) && s.turnPlays) return { type: 'endPlays', player: p.player };
       const plays = legalPlays(s, p.player);
-      const creatures = plays.filter((x) => x.label === 'discard');
+      const hand = s.players[p.player]!.hand;
+      const creatures = plays.filter(
+        (x) => x.cards.length === 1 && isSpecies(hand.find((c) => c.id === x.cards[0])!.kind),
+      );
       if (creatures.length) {
         const c = creatures[randInt(rng, creatures.length)]!;
         return { type: 'play', player: p.player, cards: c.cards };
@@ -750,6 +906,8 @@ export function defaultAction(s: GameState, rng: Rng): Action | null {
       const ids = shuffle(rng, p.cards.map((c) => c.id));
       return { type: 'chefArrange', player: p.player, keep: ids[0]!, order: ids.slice(1) };
     }
+    case 'sonar':
+      return { type: 'sonarArrange', player: p.player, order: p.cards.map((c) => c.id) };
     default:
       return null;
   }
@@ -804,6 +962,12 @@ function resolveChain(ctx: Ctx): void {
       emit(ctx, { type: 'reversed', direction: s.direction });
       return;
     case 'wave': {
+      if (isDeep(s)) {
+        // 深海變體：只重洗牌堆，棄牌堆不動
+        shuffle(rng, s.deck);
+        emit(ctx, { type: 'waved', count: s.deck.length, deckOnly: true });
+        return;
+      }
       const waveId = ch.items[0]!.cardIds[0]!;
       const idx = s.discard.findIndex((c) => c.id === waveId);
       if (idx >= 0) s.removed.push(...s.discard.splice(idx, 1));
@@ -848,7 +1012,18 @@ function resolveChain(ctx: Ctx): void {
       }
       return;
     }
+    case 'sonar': {
+      const cards = s.deck.splice(0, Math.min(4, s.deck.length));
+      if (cards.length === 0) return;
+      emit(ctx, { type: 'peek', player: actor, cards, to: [actor] });
+      setPrompt(ctx, { kind: 'sonar', player: actor, cards });
+      return;
+    }
     case 'torpedo': {
+      if (isDeep(s)) {
+        const i = s.queue.findIndex((q) => q.kind === 'promptPlay');
+        if (i >= 0) s.queue[i] = { kind: 'endTurn' };
+      }
       emit(ctx, { type: 'bombStart', player: actor });
       pushFront(ctx, { kind: 'bomb', player: nextAlive(s, actor), aside: [] });
       return;

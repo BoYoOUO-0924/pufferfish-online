@@ -8,6 +8,7 @@ import {
   type CardKind,
   type GameEvent,
   type PlayLabel,
+  type Variant,
 } from '@pufferfish/engine';
 
 export const cardImg = (kind: CardKind | 'back') => `/cards/${kind}.webp`;
@@ -26,6 +27,20 @@ export const PLAY_NAMES: Partial<Record<PlayLabel, string>> = {
   fisher: '漁販',
   torpedo: '魚雷',
   win: '收集勝利',
+  sonar: '聲納',
+  snorkel: '浮潛',
+  deepdive: '深潛',
+};
+
+/** 依規則版本的出牌名稱（深海變體的 2 張同種叫「拖網」） */
+export function playName(label: PlayLabel, variant: Variant): string | undefined {
+  if (variant === 'deep' && label === 'net') return '拖網';
+  return PLAY_NAMES[label];
+}
+
+export const VARIANT_INFO: Record<Variant, { name: string; short: string }> = {
+  classic: { name: '原版', short: '照實體遊戲規則' },
+  deep: { name: '深海變體', short: '先出牌再抽牌、可連續出牌，單張生物有效果，組合技重新設計' },
 };
 
 export const CARD_HELP: Record<CardKind, string> = {
@@ -79,9 +94,38 @@ export interface SelectionInfo {
   needsTarget: boolean;
 }
 
+/** 深海變體的出牌提示 */
+function describeDeep(cards: Card[], discardCount: number): SelectionInfo | null {
+  const kinds = cards.map((c) => c.kind);
+  if (!kinds.every(isSpecies)) return null;
+  if (cards.length === 1) {
+    const k = kinds[0]!;
+    return layerOf(k as never) === 'shallow'
+      ? { valid: true, label: `浮潛：偷看牌堆頂（只看不動）`, needsTarget: false }
+      : { valid: true, label: `深潛：這回合改從牌堆底抽`, needsTarget: false };
+  }
+  const same = kinds.every((k) => k === kinds[0]);
+  if (same && cards.length === 2) {
+    return discardCount > 0
+      ? { valid: true, label: '拖網：拿走棄牌堆最上面那張', needsTarget: false }
+      : { valid: false, label: '棄牌堆是空的，不能用拖網', needsTarget: false };
+  }
+  if (same && cards.length === 3) return { valid: true, label: '魚雷：開啟轟炸模式！', needsTarget: false };
+  const layers = new Set(kinds.map((k) => layerOf(k as never)));
+  if (layers.size === 1 && new Set(kinds).size === cards.length) {
+    if (cards.length === 3) return { valid: true, label: '聲納：看牌堆頂 4 張並重新排列', needsTarget: false };
+    if (cards.length === 5) return { valid: true, label: '收集勝利！', needsTarget: false };
+  }
+  return { valid: false, label: '同種 2 張拖網、3 張魚雷；同層 3 種聲納、5 種勝利', needsTarget: false };
+}
+
 /** 依選取的牌給出提示 */
-export function describeSelection(cards: Card[], discardCount: number): SelectionInfo {
+export function describeSelection(cards: Card[], discardCount: number, variant: Variant = 'classic'): SelectionInfo {
   if (cards.length === 0) return { valid: false, label: '選擇要出的牌', needsTarget: false };
+  if (variant === 'deep') {
+    const d = describeDeep(cards, discardCount);
+    if (d) return d;
+  }
   if (cards.length === 1) {
     const kind = cards[0]!.kind;
     if (isSpecies(kind)) return { valid: true, label: `打出 ${cardName(kind)}（無效果）`, needsTarget: false };
@@ -103,20 +147,20 @@ export function describeSelection(cards: Card[], discardCount: number): Selectio
   }
   if (cards.length === 5 && new Set(kinds).size === 5) {
     const layers = new Set(kinds.map((k) => layerOf(k as never)));
-    if (layers.size === 1) return { valid: true, label: '🏆 收集勝利！', needsTarget: false };
+    if (layers.size === 1) return { valid: true, label: '收集勝利！', needsTarget: false };
   }
   return { valid: false, label: '組合技需為同種生物 2～4 張，或同一海洋層 5 種', needsTarget: false };
 }
 
 /** 把事件轉成給人看的文字；不需要顯示的回傳 null */
-export function describeEvent(e: GameEvent, names: string[], you: number): string | null {
+export function describeEvent(e: GameEvent, names: string[], you: number, variant: Variant = 'classic'): string | null {
   const n = (i: number) => (i === you ? '你' : (names[i] ?? '?'));
   const list = (cards: Card[]) => cards.map((c) => cardName(c.kind)).join('、');
   switch (e.type) {
     case 'turnStart':
       return `── 輪到 ${n(e.player)} ──`;
     case 'draw':
-      return `${n(e.player)} 抽了 ${e.count} 張`;
+      return `${n(e.player)} ${e.bottom ? '從牌堆底' : ''}抽了 ${e.count} 張`;
     case 'gotCards':
       return `你拿到 ${list(e.cards)}`;
     case 'peek':
@@ -135,7 +179,9 @@ export function describeEvent(e: GameEvent, names: string[], you: number): strin
       const what =
         e.play === 'discard'
           ? `${cardName(e.cards[0]!.kind)}（無效果）`
-          : (PLAY_NAMES[e.play] ?? cardName(e.cards[0]!.kind));
+          : e.play === 'snorkel' || e.play === 'deepdive'
+            ? `${cardName(e.cards[0]!.kind)}・${PLAY_NAMES[e.play]}`
+            : (playName(e.play, variant) ?? cardName(e.cards[0]!.kind));
       return `${n(e.player)} 打出 ${what}${e.target !== undefined ? ` → ${n(e.target)}` : ''}`;
     }
     case 'responded':
@@ -151,7 +197,7 @@ export function describeEvent(e: GameEvent, names: string[], you: number): strin
     case 'reversed':
       return `🔄 出牌方向變成${e.direction === 1 ? '順時針' : '逆時針'}`;
     case 'waved':
-      return `🌊 棄牌堆 ${e.count} 張洗回牌堆`;
+      return e.deckOnly ? `🌊 牌堆重新洗牌（${e.count} 張）` : `🌊 棄牌堆 ${e.count} 張洗回牌堆`;
     case 'netTaken':
       return `${n(e.player)} 用漁網拿走 ${cardName(e.card.kind)}`;
     case 'chefDealt':
@@ -162,6 +208,10 @@ export function describeEvent(e: GameEvent, names: string[], you: number): strin
       return `🖐️ ${n(e.loser)} 最慢！手牌洗回牌堆重抽`;
     case 'handReset':
       return null;
+    case 'snorkeled':
+      return `${n(e.player)} 浮潛，偷看了牌堆頂`;
+    case 'sonarDone':
+      return `${n(e.player)} 用聲納重新排列牌堆頂 ${e.count} 張`;
     case 'bombStart':
       return `💣 ${n(e.player)} 發動魚雷！轟炸模式開始`;
     case 'bombDraw':

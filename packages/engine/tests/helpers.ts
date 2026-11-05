@@ -24,6 +24,7 @@ export interface SetupOpts {
   /** 從抽牌階段或出牌階段開始，預設 draw */
   at?: 'draw' | 'play';
   dead?: number[];
+  variant?: 'classic' | 'deep';
 }
 
 /** 直接組出指定局面（不經過洗牌發牌） */
@@ -54,6 +55,10 @@ export function setup(o: SetupOpts): GameState {
     timer: { id: 1, ms: 30_000 },
     timerSeq: 1,
     nextTurnOverride: null,
+    variant: o.variant ?? 'classic',
+    deepDive: o.hands.map(() => false),
+    turnPlays: 0,
+    known: o.hands.map(() => []),
   };
 }
 

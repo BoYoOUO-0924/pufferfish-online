@@ -5,7 +5,8 @@
  * 棄牌堆、各家手牌張數、牌堆張數、淘汰人數與動作鏈。絕不讀取牌堆內容或別人的手牌。
  */
 import { LAYERS, isSpecies, layerOf, type Card, type Layer, type Species } from './cards';
-import { canNoway, canPass, evalChain, legalPlays, nextAlive, type LegalPlay } from './engine';
+import { deepBotAction } from './bot-deep';
+import { canNoway, canPass, evalChain, isDeep, legalPlays, nextAlive, type LegalPlay } from './engine';
 import { pick, randInt, type Rng } from './rng';
 import type { Action, GameState } from './types';
 
@@ -274,6 +275,8 @@ function chefOrder(s: GameState, me: number, rest: Card[]): Card[] {
 
 /** 電腦玩家（或斷線代打）在目前提示下的決定；不需要它動作時回傳 null */
 export function botAction(s: GameState, player: number, rng: Rng): Action | null {
+  // 深海變體用另一套電腦玩家，兩邊分開調整
+  if (isDeep(s)) return deepBotAction(s, player, rng);
   const p = s.prompt;
   if (!p || s.phase !== 'playing' || !s.players[player]?.alive) return null;
   switch (p.kind) {
@@ -313,6 +316,8 @@ export function botAction(s: GameState, player: number, rng: Rng): Action | null
     case 'slap':
       if (!p.players.includes(player) || p.slaps.some((x) => x.player === player)) return null;
       return { type: 'slap', player, t: botSlapDelay(rng) };
+    case 'sonar':
+      return null; // 原版沒有聲納
   }
 }
 

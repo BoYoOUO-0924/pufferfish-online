@@ -1,5 +1,5 @@
 /** 前端與房間伺服器之間的訊息格式（WebSocket，JSON） */
-import type { Action, GameEvent, PlayerView } from '@pufferfish/engine';
+import type { Action, GameEvent, PlayerView, Variant } from '@pufferfish/engine';
 
 type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;
 
@@ -11,6 +11,8 @@ export type ClientMessage =
   | { type: 'addBot' }
   | { type: 'removeBot'; seatId: string }
   | { type: 'start' }
+  /** 房主在等待室切換規則版本 */
+  | { type: 'setVariant'; variant: Variant }
   | { type: 'action'; action: ClientAction }
   | { type: 'rematch' }
   | { type: 'leave' }
@@ -30,7 +32,15 @@ export type RoomPhase = 'lobby' | 'playing' | 'ended';
 
 export type ServerMessage =
   | { type: 'joined'; playerId: string; token: string; code: string }
-  | { type: 'room'; code: string; phase: RoomPhase; hostId: string | null; seats: SeatInfo[]; you: string | null }
+  | {
+      type: 'room';
+      code: string;
+      phase: RoomPhase;
+      hostId: string | null;
+      seats: SeatInfo[];
+      you: string | null;
+      variant: Variant;
+    }
   | { type: 'state'; view: PlayerView; deadline: number | null; serverNow: number }
   | { type: 'events'; events: GameEvent[] }
   | { type: 'error'; code: string; message: string }

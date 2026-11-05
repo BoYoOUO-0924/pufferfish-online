@@ -92,7 +92,7 @@ describe('§3 回合流程', () => {
 });
 
 describe('§4-5 河豚、Chill 與淘汰', () => {
-  it('有 Chill：自動消耗 Chill，選位置放回河豚，之後仍要出牌', () => {
+  it('有 Chill：自動消耗 Chill，選位置放回河豚，回合直接結束不用出牌', () => {
     let s = setup({
       hands: [['chill', 'clownfish'], ['seal'], ['dolphin']],
       deck: ['puffer', 'seal', 'dolphin'],
@@ -107,7 +107,9 @@ describe('§4-5 河豚、Chill 與淘汰', () => {
     r = act(s, { type: 'placePuffer', player: 0, position: 2 });
     s = r.state;
     expect(s.deck.map((c) => c.kind)).toEqual(['seal', 'dolphin', 'puffer']);
-    expect(s.prompt).toEqual({ kind: 'play', player: 0 });
+    // 不用出牌，輪到下一位抽牌
+    expect(s.prompt).toEqual({ kind: 'draw', player: 1 });
+    expect(handKinds(s, 0)).toEqual(['clownfish']);
     // 位置只有放的人知道
     expect(eventsFor(r.events, 0).find((e) => e.type === 'pufferPlaced')).toMatchObject({ position: 2 });
     expect(eventsFor(r.events, 1).find((e) => e.type === 'pufferPlaced')).not.toHaveProperty('position');

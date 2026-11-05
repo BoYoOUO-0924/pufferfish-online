@@ -18,6 +18,7 @@ import {
   type GameEvent,
   type GameState,
   type Rng,
+  type Variant,
 } from '@pufferfish/engine';
 import {
   MAX_NAME_LENGTH,
@@ -57,6 +58,8 @@ export interface RoomData {
   lastActivity: number;
   /** 已通知大家「代打中」的座位，用來偵測變化 */
   botControlledIds?: string[];
+  /** 規則版本（舊資料沒有這欄時視為原版） */
+  variant?: Variant;
 }
 
 export interface RoomIO {
@@ -88,6 +91,7 @@ const BOT_DELAY: Record<string, [number, number]> = {
   fisher: [1200, 2000],
   chef: [1200, 2000],
   response: [700, 1500],
+  sonar: [1200, 2000],
 };
 
 const MAX_MESSAGE_BYTES = 4096;
@@ -249,6 +253,13 @@ export class RoomCore {
         this.d.seats.splice(idx, 1);
         return this.broadcastRoom();
       }
+      case 'setVariant': {
+        this.requireHost(seat);
+        this.requireLobby();
+        if (msg.variant !== 'classic' && msg.variant !== 'deep') throw new RoomError('badVariant', '未知的規則版本');
+        this.d.variant = msg.variant;
+        return this.broadcastRoom();
+      }
       case 'start':
         return this.start(seat);
       case 'action':
@@ -334,7 +345,7 @@ export class RoomCore {
     const { state, events } = createGame(
       this.d.seats.map((s) => ({ id: s.id, name: s.name, isBot: s.isBot })),
       this.io.rng,
-      { firstPlayer: first },
+      { firstPlayer: first, variant: this.d.variant ?? 'classic' },
     );
     this.d.game = state;
     this.d.gameSeatIds = this.d.seats.map((s) => s.id);
@@ -490,6 +501,7 @@ export class RoomCore {
         hostId: this.d.hostId,
         seats,
         you: seatId,
+        variant: this.d.variant ?? 'classic',
       });
     }
   }
@@ -515,6 +527,7 @@ export class RoomCore {
       hostId: this.d.hostId,
       seats: this.seatInfos(),
       you: seatId ?? null,
+      variant: this.d.variant ?? 'classic',
     });
     this.sendState(connId);
   }

@@ -1,16 +1,17 @@
 /** 每位玩家只能看到自己該看的資訊（規格書第 10 節：公開／隱藏資訊）。 */
 import type { Card } from './cards';
-import { canNoway, canPass, evalChain } from './engine';
-import type { GameEvent, GameState, PlayKind, Timer, WinReason } from './types';
+import { canNoway, canPass, evalChain, isDeep } from './engine';
+import type { GameEvent, GameState, PlayKind, Timer, Variant, WinReason } from './types';
 
 export type PromptView =
   | { kind: 'draw'; player: number }
-  | { kind: 'play'; player: number }
+  | { kind: 'play'; player: number; canEnd: boolean; plays: number }
   | { kind: 'placePuffer'; player: number; deckCount: number }
   | { kind: 'response'; declinedByYou: boolean; canNoway: boolean; canPassTo: number | null }
   | { kind: 'fisher'; player: number; cards?: Card[] }
   | { kind: 'chef'; player: number; cards?: Card[]; cardCount: number }
-  | { kind: 'slap'; actor: number; players: number[]; slappedByYou: boolean };
+  | { kind: 'slap'; actor: number; players: number[]; slappedByYou: boolean }
+  | { kind: 'sonar'; player: number; cards?: Card[]; cardCount: number };
 
 export interface ChainView {
   actor: number;
@@ -28,7 +29,10 @@ export interface PlayerView {
   turn: number;
   turnCount: number;
   direction: 1 | -1;
-  players: { id: string; name: string; isBot: boolean; alive: boolean; handCount: number }[];
+  players: { id: string; name: string; isBot: boolean; alive: boolean; handCount: number; deepDive: boolean }[];
+  variant: Variant;
+  /** 深海變體：你確實知道的牌堆頂（由上往下） */
+  knownTop: Card[];
   hand: Card[];
   deckCount: number;
   discard: Card[];
@@ -44,8 +48,15 @@ export function viewFor(s: GameState, you: number): PlayerView {
   if (p) {
     switch (p.kind) {
       case 'draw':
+        prompt = { kind: 'draw', player: p.player };
+        break;
       case 'play':
-        prompt = { kind: p.kind, player: p.player };
+        prompt = {
+          kind: 'play',
+          player: p.player,
+          canEnd: isDeep(s) && !!s.turnPlays,
+          plays: isDeep(s) ? (s.turnPlays ?? 0) : 0,
+        };
         break;
       case 'placePuffer':
         prompt = { kind: 'placePuffer', player: p.player, deckCount: s.deck.length };
@@ -64,6 +75,14 @@ export function viewFor(s: GameState, you: number): PlayerView {
       case 'chef':
         prompt = {
           kind: 'chef',
+          player: p.player,
+          cards: p.player === you ? p.cards : undefined,
+          cardCount: p.cards.length,
+        };
+        break;
+      case 'sonar':
+        prompt = {
+          kind: 'sonar',
           player: p.player,
           cards: p.player === you ? p.cards : undefined,
           cardCount: p.cards.length,
@@ -105,12 +124,15 @@ export function viewFor(s: GameState, you: number): PlayerView {
     turn: s.turn,
     turnCount: s.turnCount,
     direction: s.direction,
-    players: s.players.map((pl) => ({
+    variant: s.variant ?? 'classic',
+    knownTop: s.known?.[you] ?? [],
+    players: s.players.map((pl, i) => ({
       id: pl.id,
       name: pl.name,
       isBot: pl.isBot,
       alive: pl.alive,
       handCount: pl.hand.length,
+      deepDive: !!s.deepDive?.[i],
     })),
     hand: s.players[you]?.hand ?? [],
     deckCount: s.deck.length,

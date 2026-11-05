@@ -11,7 +11,12 @@ export type PlayKind =
   | 'watchout'
   | 'net'
   | 'fisher'
-  | 'torpedo';
+  | 'torpedo'
+  /** 深海變體：同一海洋層 3 種不同生物 */
+  | 'sonar';
+
+/** 規則版本：classic 原版；deep 深海變體（單張生物有效果、組合技改版） */
+export type Variant = 'classic' | 'deep';
 
 /** 單體功能牌（可被 Pass 轉移） */
 export const SINGLE_TARGET_PLAYS: readonly PlayKind[] = ['steal', 'salmon', 'switch'];
@@ -52,6 +57,8 @@ export type Prompt =
   | { kind: 'response'; declined: number[] }
   | { kind: 'fisher'; player: number; cards: Card[] }
   | { kind: 'chef'; player: number; cards: Card[] }
+  /** 深海變體：聲納看到的牌堆頂幾張，重新排序後放回 */
+  | { kind: 'sonar'; player: number; cards: Card[] }
   | { kind: 'slap'; actor: number; players: number[]; slaps: { player: number; t: number }[] };
 
 export type Step =
@@ -60,6 +67,8 @@ export type Step =
   | { kind: 'endTurn' }
   | { kind: 'gain'; player: number; card: Card }
   | { kind: 'resolveChain' }
+  /** 深海變體：出牌結束後的抽牌階段 */
+  | { kind: 'drawPhase' }
   | { kind: 'bomb'; player: number; aside: Card[] };
 
 export interface Timer {
@@ -87,6 +96,14 @@ export interface GameState {
   timer: Timer | null;
   timerSeq: number;
   nextTurnOverride: number | null;
+  /** 規則版本（未設定視為 classic） */
+  variant?: Variant;
+  /** 深海變體：這回合抽牌改從牌堆底抽 */
+  deepDive?: boolean[];
+  /** 深海變體：這回合已經出了幾次牌（至少 1 次才能結束出牌） */
+  turnPlays?: number;
+  /** 深海變體：每位玩家確實知道的牌堆頂順序（浮潛、聲納看到的），牌堆頂變了就失效 */
+  known?: Card[][];
 }
 
 export type Action =
@@ -97,14 +114,18 @@ export type Action =
   | { type: 'placePuffer'; player: number; position: number }
   | { type: 'fisherChoose'; player: number; keep: string[]; returnOrder: string[] }
   | { type: 'chefArrange'; player: number; keep: string; order: string[] }
+  /** 深海變體：結束出牌，進入抽牌 */
+  | { type: 'endPlays'; player: number }
+  | { type: 'sonarArrange'; player: number; order: string[] }
   | { type: 'slap'; player: number; t: number }
   | { type: 'timeout'; timerId: number };
 
-export type PlayLabel = 'discard' | 'win' | PlayKind;
+/** snorkel／deepdive：深海變體的單張生物效果（不開回應時間） */
+export type PlayLabel = 'discard' | 'win' | 'snorkel' | 'deepdive' | PlayKind;
 
 export type GameEvent = (
   | { type: 'turnStart'; player: number }
-  | { type: 'draw'; player: number; count: number }
+  | { type: 'draw'; player: number; count: number; bottom?: boolean }
   | { type: 'gotCards'; player: number; cards: Card[] }
   /** 只有自己看得到、但還沒進手牌的牌（漁販、Chef） */
   | { type: 'peek'; player: number; cards: Card[] }
@@ -118,10 +139,13 @@ export type GameEvent = (
   | { type: 'stole'; player: number; target: number; card?: Card }
   | { type: 'switched'; player: number; target: number }
   | { type: 'reversed'; direction: 1 | -1 }
-  | { type: 'waved'; count: number }
+  /** deckOnly：深海變體只重洗牌堆，count 是牌堆張數 */
+  | { type: 'waved'; count: number; deckOnly?: boolean }
   | { type: 'netTaken'; player: number; card: Card }
   | { type: 'chefDealt'; player: number; recipients: number[] }
   | { type: 'fisherDone'; player: number; kept: number; returned: number }
+  | { type: 'snorkeled'; player: number }
+  | { type: 'sonarDone'; player: number; count: number }
   | { type: 'slapResult'; loser: number; slaps: { player: number; t: number }[] }
   | { type: 'handReset'; player: number; count: number }
   | { type: 'bombStart'; player: number }
